@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from qpsolvers import solve_qp
+from wave_functions import * 
 
 t_span = 500
 dt = 0.01
@@ -66,10 +67,53 @@ Xdes_d = np.zeros((2, num_steps))
 # parameters for circle outside the charging station
 r_cs = d_charge
 
+"""
+Learning
+"""
+
+# Define sequence parameters
+from keras.preprocessing.sequence import TimeseriesGenerator
+LOOK_BACK  = 20 # How much past samples it sees
+train_generator = []
+test_generator = []
+
+# Create neural network and define train parameters
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.layers import LSTM
+from keras.callbacks import EarlyStopping
+from keras.optimizers import Adam, SGD
+NUM_FEATURES = 1
+NUM_NEURONS  = 4
+LEARNING_RATE = 1e-3
+model = Sequential()
+model.add(LSTM(NUM_NEURONS, input_shape=(LOOK_BACK, NUM_FEATURES)))
+model.add(Dense(1, activation=None))
+optimizer = Adam(learning_rate=LEARNING_RATE)
+model.compile(optimizer=optimizer, loss='mse')
+model.summary()
+PATIENCE = 4
+callback = EarlyStopping(monitor='loss', patience=PATIENCE)
+EPOCHS = 300
+BATCH_SIZE = 2
+
+# Data parameters
+NUM_POINTS = 5000
+SPLIT_TRAIN_TEST = 0.8
+TRAIN_LENGTH = int(NUM_POINTS * SPLIT_TRAIN_TEST)
+GAIN = 0.1
+data = []
+X_train = []
+X_test = []
+y_train = []
+y_test = []
+
+# Buffer where y values (Ed values) will be stored for learning
+Ed_buffer = []
 
 for n in range(len(t)-1):
 
-    print("Current time =", n * dt)
+    print("Current time =", n * dt, '| timestep: ', n)
     # Circle around the charging station
     barrier_x = r_cs * np.cos(t) + x_cs
     barrier_y = r_cs * np.sin(t) + y_cs
@@ -117,7 +161,6 @@ for n in range(len(t)-1):
     A = -Lgh2
     b = alpha * h2 + Lfh2
     u = solve_qp(H, f[n], A, np.array([b]), None, None, None, None, solver="quadprog")
-    
     U_track = np.array([u[0], u[1]]) # combined controller for tracking the desired trajectory and maintaining battery level
     
     ### controller to take the int. robot to the CS
@@ -170,9 +213,54 @@ for n in range(len(t)-1):
     else:
         B = B_c
 
-    ## Predicting dumb energy
+    if Ed[n] < E_charge:
+        ## Predicting dumb energy
+        if len(Ed_buffer) < NUM_POINTS:
+            # collect
+            Ed_buffer.append(Ed[n])
+            data.append(n)
+            print('Collecting Ed:',Ed[n])
+        else:
+            if len(Ed_buffer) == NUM_POINTS:
+                data = np.array(data)
+                X_train = data[:TRAIN_LENGTH]
+                X_test = data[TRAIN_LENGTH:]
+                y_train = np.array(Ed_buffer[:TRAIN_LENGTH]) * GAIN
+                y_test = np.array(Ed_buffer[TRAIN_LENGTH:]) * GAIN
+                train_series = y_train.reshape((len(y_train), NUM_FEATURES))
+                test_series  = y_test.reshape((len(y_test), NUM_FEATURES))
+                train_generator = TimeseriesGenerator(train_series, train_series, length = LOOK_BACK, sampling_rate = 1, stride = 1, batch_size = BATCH_SIZE)
+                test_generator = TimeseriesGenerator(test_series, test_series, length = LOOK_BACK, sampling_rate = 1, stride = 1, batch_size = BATCH_SIZE)
+                model.fit(train_generator,epochs=EPOCHS, verbose=1, callbacks=[callback])
+                # Evaluate model
+                NUM_EVALUATIONS = 20
+                NUM_EVAL_POINTS = 20
+                for i in range(NUM_EVALUATIONS):    
+                    print(f'EVALUATION [{i}]')
+                    x_eval = X_test[i:NUM_EVAL_POINTS+i].reshape(1,NUM_EVAL_POINTS,1)
+                    y_eval = y_test[i:NUM_EVAL_POINTS+i].reshape(1,NUM_EVAL_POINTS,1)
+                    pred = model.predict(y_eval)[0][0]
+                    print('x_eval: ', x_eval.reshape(1,-1))
+                    print('y_eval: ', y_eval.reshape(1,-1))
+                    print('prediction: ', pred)
+                    print('ground_truth: ', y_test[NUM_EVAL_POINTS+i],'\n')
 
-    ##
+                test_predictions  = model.predict(test_generator)
+                XMAX, XMIN = max(data)+dt, min(data)
+                RESOLUTION = dt
+                print('data: ', data)
+                print('max, min:', XMAX, XMIN)
+                x = np.arange(XMAX - (XMAX - XMIN) * (1 - SPLIT_TRAIN_TEST) + (10*(2*dt)), XMAX, RESOLUTION)
+                print('x: ', x, x.shape)
+                fig, ax = plt.subplots(1, 1, figsize=(15, 5))
+                ax.plot(X_train,y_train/GAIN, lw=2, label='train data')
+                ax.plot(X_test,y_test/GAIN, lw=3, c='y', label='test data')
+                ax.plot(x,test_predictions/GAIN, lw=3, c='r',linestyle = ':', label='predictions')
+                ax.legend(loc="lower left")
+                plt.show()
+                exit()
+            # predict
+            print('Will predict')
 
     x1i[n+1] = x1i[n] + dt * x2i[n]
     x2i[n+1] = x2i[n] + dt * u[0]
