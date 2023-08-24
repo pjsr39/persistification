@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from qpsolvers import solve_qp
 from matplotlib.animation import FuncAnimation
 
-t_span = 50
+t_span = 120
 dt = 0.01
 t = np.arange(0, t_span + dt, dt)
 num_steps = len(t)
@@ -45,10 +45,10 @@ kv = 1.5
 K_x = 1
 K_y = 1
 r = 1
-B_d = 18
-B_c = 100
-B_d_dumb = -50
-B_c_dumb = 50
+B_d = 10 # @TODO change this
+B_c = 30 # @TODO change this
+B_d_dumb = -50 # @TODO change this 
+B_c_dumb = 25 # @TODO change this
 k_rho = 6
 d_charge = 0.5
 alpha = 4
@@ -69,6 +69,12 @@ Xdes_d = np.zeros((2, num_steps))
 
 # parameters for circle outside the charging station
 r_cs = d_charge
+
+# flags control
+cs_occupied = {'dumb': False, 'intelligent': False}
+
+# speed parameters
+V_MIN = 0.2
 
 """
 Learning
@@ -98,7 +104,7 @@ model.summary()
 PATIENCE = 100
 callback = EarlyStopping(monitor='loss', patience=PATIENCE)
 EPOCHS = 300
-BATCH_SIZE = 4
+BATCH_SIZE = 2
 
 # Data parameters
 NUM_POINTS = 3000
@@ -111,12 +117,32 @@ X_test = []
 y_train = []
 y_test = []
 
-# Buffer where y values (Ed values) will be stored for learning
-Ed_buffer = []
+# Buffers
+from collections import deque
+Ed_buffer = [] # Buffer where y values (Ed values) will be stored for learning
+predictions = [] # Buffer of predicted energy value through time
+Ed_past = deque(maxlen=LOOK_BACK)
+
+# flags
+learned = False
+
+# Forecast parameters
+N = 3
+K = N-1
+
+# Normalization bounds
+Y_MAX, Y_MIN = E_charge + 50, E_min + 10
+
+def unnormalize(x):
+    """ Auxiliar function that unnormalizes values """
+    return x * (Y_MAX - Y_MIN) + Y_MIN
+def normalize(x):
+    """ Auxiliar function that normalizes values """
+    return (x - Y_MIN) / (Y_MAX - Y_MIN)
 
 for n in range(len(t)-1):
-
-    print("Current time =", n * dt)
+    time = n * dt
+    print("Current time =", time)
     # Circle around the charging station
     barrier_x = r_cs * np.cos(t) + x_cs
     barrier_y = r_cs * np.sin(t) + y_cs
@@ -233,13 +259,14 @@ for n in range(len(t)-1):
     else:
         B = B_c
 
-    if Ed[n] < E_charge:
-        ## Predicting dumb energy
+    # Start learning as soon as E[n] < E_charge
+    if learned == False and Ed[n] < E_charge:
+        # Collect data to learn
         if len(Ed_buffer) < NUM_POINTS:
-            # collect
             Ed_buffer.append(Ed[n])
-            data.append(n*dt)
-            print('Collecting Ed:',Ed[n])
+            data.append(time)
+            print('Collecting Ed:',Ed_buffer[-1])
+        # As soon as data is collected start learning
         else:
             if len(Ed_buffer) == NUM_POINTS:
                 # Define data
@@ -249,10 +276,10 @@ for n in range(len(t)-1):
                 y_train = np.array(Ed_buffer[:TRAIN_LENGTH])
                 y_test = np.array(Ed_buffer[TRAIN_LENGTH:])
                 # Normalize
-                Y_MIN_TRAIN, Y_MAX_TRAIN = min(y_train), max(y_train)
-                Y_MIN_TEST, Y_MAX_TEST = min(y_test), max(y_test)
-                y_train = (y_train - Y_MIN_TRAIN) / (Y_MAX_TRAIN - Y_MIN_TRAIN)
-                y_test = (y_test - Y_MIN_TEST) / (Y_MAX_TEST - Y_MIN_TEST)
+                #Y_MIN, Y_MAX = min(y_train), max(y_train)
+                #Y_MIN, Y_MAX = min(y_test), max(y_test)
+                y_train = (y_train - Y_MIN) / (Y_MAX - Y_MIN)
+                y_test = (y_test - Y_MIN) / (Y_MAX - Y_MIN)
                 # Prepare sequence generators
                 train_series = y_train.reshape((len(y_train), NUM_FEATURES))
                 test_series  = y_test.reshape((len(y_test), NUM_FEATURES))
@@ -267,17 +294,17 @@ for n in range(len(t)-1):
                     print(f'EVALUATION [{i}]')
                     x_eval = X_test[i:NUM_EVAL_POINTS+i].reshape(1,NUM_EVAL_POINTS,1)
                     y_eval = y_test[i:NUM_EVAL_POINTS+i].reshape(1,NUM_EVAL_POINTS,1)
-                    pred = model.predict(y_eval)[0][0]
+                    pred_eval = model.predict(y_eval)[0][0]
                     print('x_eval: ', x_eval.reshape(1,-1))
                     print('y_eval: ', y_eval.reshape(1,-1))
-                    print('prediction: ', pred)
-                    print('ground_truth: ', y_test[NUM_EVAL_POINTS+i],'\n')
-
+                    print('prediction: ', pred_eval)
+                    print('ground_truth: ', y_test[NUM_EVAL_POINTS+i])
+                    print('#predicted_un: ', unnormalize(pred_eval))
+                    print('#ground_truth_un: ', unnormalize(y_test[NUM_EVAL_POINTS+i]))
+                """
                 test_predictions  = model.predict(test_generator)
                 XMAX, XMIN = max(data), min(data)
                 RESOLUTION = dt
-                print('data: ', data)
-                print('max, min:', XMAX, XMIN)
                 x = np.arange(XMAX - (XMAX - XMIN) * (1 - SPLIT_TRAIN_TEST) + LOOK_BACK * RESOLUTION, XMAX, 1)
                 print('x: ', x, x.shape)
                 fig, ax = plt.subplots(1, 1, figsize=(15, 5))
@@ -287,8 +314,75 @@ for n in range(len(t)-1):
                 ax.legend(loc="lower left")
                 plt.show()
                 exit()
-            # predict
-            print('Will predict')
+                """
+                learned = True
+    """ Prediction part """
+    # After n > NUM_POINTS    
+    Ed_past.append(Ed[n]) # Save past Ed for predictions
+    Ed_past_normalized = deque(list(map(normalize, Ed_past)),maxlen=LOOK_BACK)
+    predictions.clear()
+    if learned:
+        print('\nPredicting')
+        y_past = np.array([Ed_past_normalized]).reshape(1,LOOK_BACK,1)
+        print('y_past: ', y_past.reshape(1,LOOK_BACK))
+        predictions.append(model.predict(y_past)[0][0]) # predictions -> [Ed'[n+1]]
+        
+        if predictions[-1] < E_lower:
+            U_dumb = Ucs_d
+        elif predictions[-1] > E_lower:
+            U_dumb = U_track_dumb
+        
+        if p_d < d_charge:
+            cs_occupied['dumb'] = True
+        elif p_d > d_charge:
+            cs_occupied['dumb'] = False
+
+        # if intelligent needs to charge and dumb is not charging
+        if (E[n] < E_lower) and (cs_occupied['dumb'] == False):
+            print('# Intelligent needs to charge and dumb is NOT charging')
+            U = U_cs_i
+            # call the prediction N (e.g., 2) times
+            Ed_past_temp = Ed_past_normalized.copy()
+            for k in range(1,K+1):
+                # (n+2),(n+3),...,(n+N)
+                Ed_past_temp.append(predictions[-1])
+                y_past = np.array([Ed_past_temp]).reshape(1,LOOK_BACK,1)
+                predictions.append(model.predict(y_past)[0][0]) # predictions -> [Ed'[k+n+1]]
+                print(f'k [{k}] y_past_temp: {y_past.reshape(1,LOOK_BACK)}')
+                print(f'k [{k}] prediction: {predictions[-1]}')
+            print('predictions_actual: ', predictions)
+            print('predictions_unnormalized: ', list(map(unnormalize, predictions)))
+            # if any next value is lower than E_lower -> reduce velocity and leave cs
+            if any(unnormalize(pred) <= E_lower for pred in predictions):
+                print(f'Leaving the charging station because some {predictions} <= {E_lower}')
+                vi = V_MIN
+                U = U_track_i
+            # otherwise it just stays charging
+            else:
+                U = U_cs_i
+        # if intelligent needs to charge and dumb is charging
+        elif (E[n] <= E_lower) and (cs_occupied['dumb'] == True):
+            print('# Intelligent needs to charge and dumb is charging')
+            # keep on tracking but slower
+            vi = V_MIN
+            U = U_track_i
+            # look into the future and check if dumb will be charged in any N steps
+            # call the prediction N (e.g., 2) times
+            Ed_past_temp = Ed_past_normalized.copy()
+            for k in range(1,K+1):
+                # (n+2),(n+3),...,(n+k+N) 
+                Ed_past_temp.append(predictions[-1])
+                y_past = np.array([Ed_past_temp]).reshape(1,LOOK_BACK,1)
+                predictions.append(model.predict(y_past)[0][0]) # predictions -> [Ed'[k+n+1]]
+                print(f'k [{k}] y_past_temp: {y_past.reshape(1,LOOK_BACK)}')
+                print(f'k [{k}] prediction: {predictions[-1]}')
+            print('predictions_actual: ', predictions)
+            print('predictions_unnormalized: ', list(map(unnormalize, predictions)))
+            # if any next value is higher than E_charged -> reduce velocity and go to charging station
+            if any(unnormalize(pred) >= E_charge for pred in predictions):
+                print(f'Going to charging station because some {predictions} >= {E_charge}')
+                vi = V_MIN # it should go slow because it might go below E_min (which is risky)
+                U = U_cs_i
 
     x1i[n+1] = x1i[n] + dt * x2i[n]
     x2i[n+1] = x2i[n] + dt * U[0]
@@ -348,10 +442,10 @@ def update(frame):
     return line_E_Ed_d, time_text, time_text2, line_x1d_y1d, line_E, moving_point_i, moving_point_d
 
 # Create the animations
-animation_x1i_y1i = FuncAnimation(fig, update, frames=num_steps, interval=20, blit=True)
-animation_x1d_y1d = FuncAnimation(fig, update, frames=num_steps, interval=20, blit=True)
-animation_E_Ed = FuncAnimation(fig, update, frames=num_steps, interval=20, blit=True)
-animation_E = FuncAnimation(fig, update, frames=num_steps, interval=20, blit=True)
+animation_x1i_y1i = FuncAnimation(fig, update, frames=num_steps, interval=25, blit=True)
+animation_x1d_y1d = FuncAnimation(fig, update, frames=num_steps, interval=25, blit=True)
+animation_E_Ed = FuncAnimation(fig, update, frames=num_steps, interval=25, blit=True)
+animation_E = FuncAnimation(fig, update, frames=num_steps, interval=25, blit=True)
 
 # Show the animations
 plt.show()
