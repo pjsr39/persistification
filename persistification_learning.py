@@ -70,6 +70,49 @@ Xdes_d = np.zeros((2, num_steps))
 # parameters for circle outside the charging station
 r_cs = d_charge
 
+"""
+Learning
+"""
+
+# Define sequence parameters
+from keras.preprocessing.sequence import TimeseriesGenerator
+LOOK_BACK  = 20 # How much past samples it sees
+train_generator = []
+test_generator = []
+
+# Create neural network and define train parameters
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.layers import LSTM
+from keras.callbacks import EarlyStopping
+from keras.optimizers import Adam, SGD
+NUM_FEATURES = 1
+NUM_NEURONS  = 4
+LEARNING_RATE = 1e-3
+model = Sequential()
+model.add(LSTM(NUM_NEURONS, input_shape=(LOOK_BACK, NUM_FEATURES)))
+model.add(Dense(1, activation=None))
+optimizer = Adam(learning_rate=LEARNING_RATE)
+model.compile(optimizer=optimizer, loss='mse')
+model.summary()
+PATIENCE = 100
+callback = EarlyStopping(monitor='loss', patience=PATIENCE)
+EPOCHS = 300
+BATCH_SIZE = 4
+
+# Data parameters
+NUM_POINTS = 3000
+SPLIT_TRAIN_TEST = 0.8
+TRAIN_LENGTH = int(NUM_POINTS * SPLIT_TRAIN_TEST)
+GAIN = 0.01
+data = []
+X_train = []
+X_test = []
+y_train = []
+y_test = []
+
+# Buffer where y values (Ed values) will be stored for learning
+Ed_buffer = []
 
 for n in range(len(t)-1):
 
@@ -189,6 +232,63 @@ for n in range(len(t)-1):
         B = -B_d*abs(vi) - Kd
     else:
         B = B_c
+
+    if Ed[n] < E_charge:
+        ## Predicting dumb energy
+        if len(Ed_buffer) < NUM_POINTS:
+            # collect
+            Ed_buffer.append(Ed[n])
+            data.append(n*dt)
+            print('Collecting Ed:',Ed[n])
+        else:
+            if len(Ed_buffer) == NUM_POINTS:
+                # Define data
+                data = np.array(data)
+                X_train = data[:TRAIN_LENGTH]
+                X_test = data[TRAIN_LENGTH:]
+                y_train = np.array(Ed_buffer[:TRAIN_LENGTH])
+                y_test = np.array(Ed_buffer[TRAIN_LENGTH:])
+                # Normalize
+                Y_MIN_TRAIN, Y_MAX_TRAIN = min(y_train), max(y_train)
+                Y_MIN_TEST, Y_MAX_TEST = min(y_test), max(y_test)
+                y_train = (y_train - Y_MIN_TRAIN) / (Y_MAX_TRAIN - Y_MIN_TRAIN)
+                y_test = (y_test - Y_MIN_TEST) / (Y_MAX_TEST - Y_MIN_TEST)
+                # Prepare sequence generators
+                train_series = y_train.reshape((len(y_train), NUM_FEATURES))
+                test_series  = y_test.reshape((len(y_test), NUM_FEATURES))
+                train_generator = TimeseriesGenerator(train_series, train_series, length = LOOK_BACK, sampling_rate = 1, stride = 1, batch_size = BATCH_SIZE)
+                test_generator = TimeseriesGenerator(test_series, test_series, length = LOOK_BACK, sampling_rate = 1, stride = 1, batch_size = BATCH_SIZE)
+                # Train
+                model.fit(train_generator,epochs=EPOCHS, verbose=1, callbacks=[callback])
+                # Evaluate model
+                NUM_EVALUATIONS = 20
+                NUM_EVAL_POINTS = LOOK_BACK
+                for i in range(NUM_EVALUATIONS):    
+                    print(f'EVALUATION [{i}]')
+                    x_eval = X_test[i:NUM_EVAL_POINTS+i].reshape(1,NUM_EVAL_POINTS,1)
+                    y_eval = y_test[i:NUM_EVAL_POINTS+i].reshape(1,NUM_EVAL_POINTS,1)
+                    pred = model.predict(y_eval)[0][0]
+                    print('x_eval: ', x_eval.reshape(1,-1))
+                    print('y_eval: ', y_eval.reshape(1,-1))
+                    print('prediction: ', pred)
+                    print('ground_truth: ', y_test[NUM_EVAL_POINTS+i],'\n')
+
+                test_predictions  = model.predict(test_generator)
+                XMAX, XMIN = max(data), min(data)
+                RESOLUTION = dt
+                print('data: ', data)
+                print('max, min:', XMAX, XMIN)
+                x = np.arange(XMAX - (XMAX - XMIN) * (1 - SPLIT_TRAIN_TEST) + LOOK_BACK * RESOLUTION, XMAX, 1)
+                print('x: ', x, x.shape)
+                fig, ax = plt.subplots(1, 1, figsize=(15, 5))
+                ax.plot(X_train,y_train/GAIN, lw=2, label='train data')
+                ax.plot(X_test,y_test/GAIN, lw=3, c='y', label='test data')
+                ax.plot(x,test_predictions/GAIN, lw=3, c='r',linestyle = ':', label='predictions')
+                ax.legend(loc="lower left")
+                plt.show()
+                exit()
+            # predict
+            print('Will predict')
 
     x1i[n+1] = x1i[n] + dt * x2i[n]
     x2i[n+1] = x2i[n] + dt * U[0]
