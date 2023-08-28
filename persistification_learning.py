@@ -167,6 +167,7 @@ def normalize_local(x, min_, max_):
 for n in range(len(t)-1):
 
     print("Current time =", n * dt)
+    time = n * dt
 
     # Circle around the charging station
     barrier_x = r_cs * np.cos(t) + x_cs
