@@ -81,12 +81,6 @@ Xdes_d = np.zeros((2, num_steps))
 # parameters for circle outside the charging station
 r_cs = d_charge
 
-# flags control
-cs_occupied = {'dumb': False, 'intelligent': False}
-
-# speed parameters
-V_MIN = 0.2
-
 """
 Learning
 """
@@ -114,11 +108,11 @@ model.compile(optimizer=optimizer, loss='mse')
 model.summary()
 PATIENCE = 50
 callback = EarlyStopping(monitor='loss', patience=PATIENCE)
-EPOCHS = 30
+EPOCHS = 50
 BATCH_SIZE = 2
 
 # Data parameters
-NUM_POINTS = 7600 # TODO: this should be equal to two periods
+NUM_POINTS = 7300
 SPLIT_TRAIN_TEST = 0.5
 TRAIN_LENGTH = int(NUM_POINTS * SPLIT_TRAIN_TEST)
 GAIN = 0.01
@@ -138,8 +132,7 @@ Ed_past = deque(maxlen=LOOK_BACK)
 learned = False
 
 # Forecast parameters
-N = 3
-K = N-1
+N = 5 # number of predicted values
 
 # Normalization bounds
 Y_MAX, Y_MIN = E_charge + 50, E_min + 10
@@ -296,20 +289,6 @@ for n in range(len(t)-1):
     elif E[n] >= E_charge:
         needs_charging_i = False
 
-    if needs_charging_i and needs_charging_d:
-        U = U_wa_i
-        if p_wa < 0.02:
-            vi = 0
-    elif needs_charging_i:
-        U = U_cs_i
-    else:
-        U = U_track_i
-
-    if p_c > d_charge:
-        B = -B_d*abs(vi)**2 - Kd
-    else:
-        B = B_c
-
     # Start learning as soon as E[n] < E_charge
     if learned == False and Ed[n] < E_charge:
         # Collect data to learn
@@ -386,73 +365,57 @@ for n in range(len(t)-1):
                 learned = True
                 val = input("Press any key to start to predict")
                 print(val)
-    """ Prediction part """
     # After n > NUM_POINTS    
     Ed_past.append(Ed[n]) # Save past Ed for predictions
     Ed_past_normalized = deque(list(map(normalize, Ed_past)),maxlen=LOOK_BACK)
     predictions.clear()
+    """ Prediction part """
     if learned:
-        print('\nPredicting')
+        #print('\nPredicting')
+        # Save the past values normalized in y_past
         y_past = np.array([Ed_past_normalized]).reshape(1,LOOK_BACK,1)
-        print('y_past: ', y_past.reshape(1,LOOK_BACK))
-        predictions.append(model.predict(y_past)[0][0]) # predictions -> [Ed'[n+1]]
-        
-        if predictions[-1] < E_lower:
-            U_dumb = Ucs_d
-        elif predictions[-1] > E_lower:
-            U_dumb = U_track_dumb
-        
-        if p_d < d_charge:
-            cs_occupied['dumb'] = True
-        elif p_d > d_charge:
-            cs_occupied['dumb'] = False
+        #print('y_past: ', y_past.reshape(1,LOOK_BACK))
 
-        # if intelligent needs to charge and dumb is not charging
-        if (E[n] < E_lower) and (cs_occupied['dumb'] == False):
-            print('# Intelligent needs to charge and dumb is NOT charging')
-            U = U_cs_i
-            # call the prediction N (e.g., 2) times
-            Ed_past_temp = Ed_past_normalized.copy()
-            for k in range(1,K+1):
-                # (n+2),(n+3),...,(n+N)
-                Ed_past_temp.append(predictions[-1])
-                y_past = np.array([Ed_past_temp]).reshape(1,LOOK_BACK,1)
-                predictions.append(model.predict(y_past)[0][0]) # predictions -> [Ed'[k+n+1]]
-                print(f'k [{k}] y_past_temp: {y_past.reshape(1,LOOK_BACK)}')
-                print(f'k [{k}] prediction: {predictions[-1]}')
-            print('predictions_actual: ', predictions)
-            print('predictions_unnormalized: ', list(map(unnormalize, predictions)))
-            # if any next value is lower than E_lower -> reduce velocity and leave cs
-            if any(unnormalize(pred) <= E_lower for pred in predictions):
-                print(f'Leaving the charging station because some {predictions} <= {E_lower}')
-                vi = V_MIN
-                U = U_track_i
-            # otherwise it just stays charging
-            else:
-                U = U_cs_i
-        # if intelligent needs to charge and dumb is charging
-        elif (E[n] <= E_lower) and (cs_occupied['dumb'] == True):
-            print('# Intelligent needs to charge and dumb is charging')
-            # keep on tracking but slower
-            vi = V_MIN
-            U = U_track_i
-            # look into the future and check if dumb will be charged in any N steps
-            # call the prediction N (e.g., 2) times
-            Ed_past_temp = Ed_past_normalized.copy()
-            for k in range(1,K+1):
-                # (n+2),(n+3),...,(n+k+N) 
-                Ed_past_temp.append(predictions[-1])
-                y_past = np.array([Ed_past_temp]).reshape(1,LOOK_BACK,1)
-                predictions.append(model.predict(y_past)[0][0]) # predictions -> [Ed'[k+n+1]]
-                print(f'k [{k}] y_past_temp: {y_past.reshape(1,LOOK_BACK)}')
-                print(f'k [{k}] prediction: {predictions[-1]}')
-            print('predictions_actual: ', predictions)
-            print('predictions_unnormalized: ', list(map(unnormalize, predictions)))
-            # if any next value is higher than E_charged -> reduce velocity and go to charging station
-            if any(unnormalize(pred) >= E_charge for pred in predictions):
-                print(f'Going to charging station because some {predictions} >= {E_charge}')
-                vi = V_MIN # it should go slow because it might go below E_min (which is risky)
-                U = U_cs_i
+        # Filling the prediction vector
+        Ed_past_temp = Ed_past_normalized.copy() # Saving normalized values in Ed_past_temp
+        # (n+1),(n+2),...,(n+k+N)
+        for k in range(N):
+            #if k == 0: # Predicting n+1
+            predictions.append(model.predict(y_past, verbose=0)[0][0]) # predictions gets Ed'[n+1]
+            Ed_past_temp.append(predictions[-1])
+            y_past = np.array([Ed_past_temp]).reshape(1,LOOK_BACK,1)
+            #if k > 0:
+            #    predictions.append(model.predict(y_past)[0][0]) # predictions -> [Ed'[n+k+1]]
+            # print(f'k [{k}] y_past_temp: {y_past.reshape(1,LOOK_BACK)}')
+            # print(f'k [{k}] prediction: {predictions[-1]}')
+        # print('predictions_actual: ', predictions)
+        print('predictions_unnormalized: ', list(map(unnormalize, predictions)))
+    
+        # If any prediction <= E_lower 
+        # then needs_charging_d = True
+        if any(unnormalize(pred) <= E_lower for pred in predictions):
+            print(f'Leaving the charging station because some {predictions} <= {E_lower}')
+            needs_charging_d = True
+    
+        # If any prediction >= E_charge 
+        # then needs_charging_d = False
+        if any(unnormalize(pred) >= E_charge for pred in predictions):
+            print(f'Going to charging station because some {predictions} >= {E_charge}')
+            needs_charging_d = False
+    
+    if needs_charging_i and needs_charging_d:
+        U = U_wa_i
+        if p_wa < 0.02:
+            vi = 0
+    elif needs_charging_i:
+        U = U_cs_i
+    else:
+        U = U_track_i
+
+    if p_c > d_charge:
+        B = -B_d*abs(vi)**2 - Kd
+    else:
+        B = B_c
 
     x1i[n+1] = x1i[n] + dt * x2i[n]
     x2i[n+1] = x2i[n] + dt * U[0]
