@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from qpsolvers import solve_qp
 from matplotlib.animation import FuncAnimation
 
-t_span = 300
+t_span = 120
 dt = 0.01
 t = np.arange(0, t_span + dt, dt)
 num_steps = len(t)
@@ -85,6 +85,9 @@ r_cs = d_charge
 Learning
 """
 
+# Set seed
+seed_obj = np.random.RandomState(9999)
+
 # Define sequence parameters
 from keras.preprocessing.sequence import TimeseriesGenerator
 LOOK_BACK  = 5 # How much past samples it sees
@@ -96,7 +99,7 @@ from keras.models import Sequential
 from keras.layers import Dense
 from keras.layers import LSTM
 from keras.callbacks import EarlyStopping
-from keras.optimizers import Adam, SGD
+from keras.optimizers import Adam
 NUM_FEATURES = 1
 NUM_NEURONS  = 4
 LEARNING_RATE = 1e-3
@@ -107,9 +110,19 @@ optimizer = Adam(learning_rate=LEARNING_RATE)
 model.compile(optimizer=optimizer, loss='mse')
 model.summary()
 PATIENCE = 50
-callback = EarlyStopping(monitor='loss', patience=PATIENCE)
-EPOCHS = 50
+early_stopping_callback = EarlyStopping(monitor='loss', patience=PATIENCE)
+EPOCHS = 5
 BATCH_SIZE = 2
+
+# Model checkpoint (to save the best model during learning)
+from keras.callbacks import ModelCheckpoint
+checkpoint_filepath = '/tmp/checkpoint'
+model_checkpoint_callback = ModelCheckpoint(
+    filepath=checkpoint_filepath,
+    save_weights_only=True,
+    monitor='loss',
+    mode='min',
+    save_best_only=True)
 
 # Data parameters
 NUM_POINTS = 7300
@@ -135,8 +148,8 @@ learned = False
 N = 5 # number of predicted values
 
 # Normalization bounds
-Y_MAX, Y_MIN = E_charge + 50, E_min + 10
-NORMALIZE_LOCAL = True # flag to normalize with local dataset distribution bounds
+Y_MAX, Y_MIN = E_charge + 5, E_lower - 5
+NORMALIZE_LOCAL = False # flag to normalize with local dataset distribution bounds
 
 # Display
 TIME_SHOW_DATA = 3
@@ -329,7 +342,8 @@ for n in range(len(t)-1):
                 train_generator = TimeseriesGenerator(train_series, train_series, length = LOOK_BACK, sampling_rate = 1, stride = 1, batch_size = BATCH_SIZE)
                 test_generator = TimeseriesGenerator(test_series, test_series, length = LOOK_BACK, sampling_rate = 1, stride = 1, batch_size = BATCH_SIZE)
                 # Train
-                model.fit(train_generator,epochs=EPOCHS, verbose=1, callbacks=[callback])
+                model.fit(train_generator,epochs=EPOCHS, verbose=1, callbacks=[early_stopping_callback, model_checkpoint_callback])
+                model.load_weights(checkpoint_filepath) # Load the best model
                 # Evaluate model
                 NUM_EVALUATIONS = 20
                 NUM_EVAL_POINTS = LOOK_BACK
@@ -399,9 +413,9 @@ for n in range(len(t)-1):
     
         # If any prediction >= E_charge 
         # then needs_charging_d = False
-        if any(unnormalize(pred) >= E_charge for pred in predictions):
-            print(f'Going to charging station because some {predictions} >= {E_charge}')
-            needs_charging_d = False
+        # if any(unnormalize(pred) >= E_charge for pred in predictions):
+        #     print(f'Going to charging station because some {predictions} >= {E_charge}')
+        #     needs_charging_d = False
     
     if needs_charging_i and needs_charging_d:
         U = U_wa_i
