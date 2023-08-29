@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from qpsolvers import solve_qp
 from matplotlib.animation import FuncAnimation
 
-t_span = 120
+t_span = 175
 dt = 0.01
 t = np.arange(0, t_span + dt, dt)
 num_steps = len(t)
@@ -81,6 +81,9 @@ Xdes_d = np.zeros((2, num_steps))
 # parameters for circle outside the charging station
 r_cs = d_charge
 
+# parameters for quadprog
+H = np.eye(2)
+
 """
 Learning
 """
@@ -111,7 +114,7 @@ model.compile(optimizer=optimizer, loss='mse')
 model.summary()
 PATIENCE = 50
 early_stopping_callback = EarlyStopping(monitor='loss', patience=PATIENCE)
-EPOCHS = 5
+EPOCHS = 30
 BATCH_SIZE = 2
 
 # Model checkpoint (to save the best model during learning)
@@ -125,7 +128,7 @@ model_checkpoint_callback = ModelCheckpoint(
     save_best_only=True)
 
 # Data parameters
-NUM_POINTS = 7300
+NUM_POINTS = 7300 + 7300
 SPLIT_TRAIN_TEST = 0.5
 TRAIN_LENGTH = int(NUM_POINTS * SPLIT_TRAIN_TEST)
 GAIN = 0.01
@@ -143,6 +146,7 @@ Ed_past = deque(maxlen=LOOK_BACK)
 
 # flags
 learned = False
+predict = True
 
 # Forecast parameters
 N = 5 # number of predicted values
@@ -170,10 +174,36 @@ def normalize_local(x, min_, max_):
     """ Auxiliar function that normalizes values """
     return (x - min_) / (max_ - min_)
 
+"""
+Logging
+"""
+import calendar
+import time
+import os
+# Timestamp for the logging folder
+current_GMT = time.gmtime()
+ts = str(calendar.timegm(current_GMT))
+wd = os.path.join(os.getcwd(),'log')
+if not os.path.isdir(wd):
+    os.mkdir(os.path.join(wd))
+folder_name = 'log_' + ts
+os.mkdir(os.path.join(wd, folder_name))
+folder_dir = os.path.join(wd, folder_name)
+import logging
+logging.basicConfig(filename=os.path.join(folder_dir,"log.txt"),
+                    level=logging.DEBUG,
+                    format="%(asctime)s %(message)s",
+                    )
+
+"""
+Main loop
+"""
+logging.debug("The program started")
 for n in range(len(t)-1):
 
     print("Current time =", n * dt)
-    time = n * dt
+    timestep = n * dt
+    logging.debug(f"iteration: {n}, time: {timestep}")
 
     # Circle around the charging station
     barrier_x = r_cs * np.cos(t) + x_cs
@@ -218,12 +248,14 @@ for n in range(len(t)-1):
     partialh2_partialy = (-B_d / k_rho) * (norm_rob_cs ** 2 * V_i[1, n] - 2 * ((X_i[0, n] - X_cs[0, n]) * V_i[0, n] + (X_i[1, n] - X_cs[1 ,n]) * V_i[1, n]) * (X_i[1, n] - X_cs[1, n])) / norm_rob_cs ** 4 - alpha * (B_d / k_rho) * (X_i[1, n] - X_cs[1, n]) / norm_rob_cs ** 2
     Lfh2 = partialh2_partialx * V_i[0, n] + partialh2_partialy * V_i[1, n] + alpha * (-B_d * abs(vi ** 2))
     Lgh2 = (-B_d / k_rho * (norm_rob_cs ** 2)) * np.array([X_i[0, n] - X_cs[0, n] - 2 * B_d * V_i[0, n], X_i[1, n] - X_cs[1, n] - 2 * B_d * V_i[1, n]])
-    H = np.eye(2)
     f = -U_nom.T
     A = -Lgh2
     b = alpha * h2 + Lfh2
     u = solve_qp(H, f[n], A, np.array([b]), None, None, None, None, solver="quadprog")
-    
+    logging.debug(f"u: {u}")
+    logging.debug(f"h2: {h2}")
+    logging.debug(f"vi: {vi}")
+
     U_track_i = np.array([u[0], u[1]]) # combined controller for tracking the desired trajectory and maintaining battery level
     
     ### controller to take the int. robot to the CS
@@ -307,7 +339,7 @@ for n in range(len(t)-1):
         # Collect data to learn
         if len(Ed_buffer) < NUM_POINTS:
             Ed_buffer.append(Ed[n])
-            data.append(time)
+            data.append(timestep)
             print('Collecting Ed:',Ed_buffer[-1])
         # As soon as data is collected start learning
         else:
@@ -362,21 +394,8 @@ for n in range(len(t)-1):
                     else:
                         print('#predicted_un: ', unnormalize(pred_eval))
                         print('#ground_truth_un: ', unnormalize(y_test[NUM_EVAL_POINTS+i]))
-                """
-                test_predictions  = model.predict(test_generator)
-                XMAX, XMIN = max(data), min(data)
-                RESOLUTION = dt
-                x = np.arange(XMAX - (XMAX - XMIN) * (1 - SPLIT_TRAIN_TEST) + LOOK_BACK * RESOLUTION, XMAX, 1)
-                print('x: ', x, x.shape)
-                fig, ax = plt.subplots(1, 1, figsize=(15, 5))
-                ax.plot(X_train,y_train/GAIN, lw=2, label='train data')
-                ax.plot(X_test,y_test/GAIN, lw=3, c='y', label='test data')
-                ax.plot(x,test_predictions/GAIN, lw=3, c='r',linestyle = ':', label='predictions')
-                ax.legend(loc="lower left")
-                plt.show()
-                exit()
-                """
                 learned = True
+                logging.debug("Learning is ready.")
                 val = input("Press any key to start to predict")
                 print(val)
     # After n > NUM_POINTS    
@@ -384,31 +403,23 @@ for n in range(len(t)-1):
     Ed_past_normalized = deque(list(map(normalize, Ed_past)),maxlen=LOOK_BACK)
     predictions.clear()
     """ Prediction part """
-    if learned:
-        #print('\nPredicting')
-        # Save the past values normalized in y_past
-        y_past = np.array([Ed_past_normalized]).reshape(1,LOOK_BACK,1)
-        #print('y_past: ', y_past.reshape(1,LOOK_BACK))
+    if learned and predict:
+        y_past = np.array([Ed_past_normalized]).reshape(1,LOOK_BACK,1) # Save the past values normalized in y_past
 
         # Filling the prediction vector
         Ed_past_temp = Ed_past_normalized.copy() # Saving normalized values in Ed_past_temp
-        # (n+1),(n+2),...,(n+k+N)
         for k in range(N):
-            #if k == 0: # Predicting n+1
             predictions.append(model.predict(y_past, verbose=0)[0][0]) # predictions gets Ed'[n+1]
             Ed_past_temp.append(predictions[-1])
             y_past = np.array([Ed_past_temp]).reshape(1,LOOK_BACK,1)
-            #if k > 0:
-            #    predictions.append(model.predict(y_past)[0][0]) # predictions -> [Ed'[n+k+1]]
-            # print(f'k [{k}] y_past_temp: {y_past.reshape(1,LOOK_BACK)}')
-            # print(f'k [{k}] prediction: {predictions[-1]}')
-        # print('predictions_actual: ', predictions)
-        print('predictions_unnormalized: ', list(map(unnormalize, predictions)))
+        unnormalized_predictions = list(map(unnormalize, predictions))
+        logging.debug(f"predictions: {unnormalized_predictions}")
+        print(f"predictions: {unnormalized_predictions}")
     
-        # If any prediction <= E_lower 
-        # then needs_charging_d = True
+        # If any prediction <= E_lower, then needs_charging_d = True
         if any(unnormalize(pred) <= E_lower for pred in predictions):
-            print(f'Leaving the charging station because some {predictions} <= {E_lower}')
+            logging.debug(f'Leaving the charging station because some {unnormalized_predictions} <= {E_lower}')
+            print(f'Leaving the charging station because some {unnormalized_predictions} <= {E_lower}')
             needs_charging_d = True
     
         # If any prediction >= E_charge 
@@ -430,6 +441,8 @@ for n in range(len(t)-1):
         B = -B_d*abs(vi)**2 - Kd
     else:
         B = B_c
+    logging.debug(f"Ed: {Ed[n]}")
+    logging.debug(f"needs_charging_d: {needs_charging_d}, needs_charging_i: {needs_charging_i}\n")
 
     x1i[n+1] = x1i[n] + dt * x2i[n]
     x2i[n+1] = x2i[n] + dt * U[0]
