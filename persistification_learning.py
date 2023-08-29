@@ -408,7 +408,7 @@ for n in range(len(t)-1):
 
         # Filling the prediction vector
         Ed_past_temp = Ed_past_normalized.copy() # Saving normalized values in Ed_past_temp
-        for k in range(N):
+        for _ in range(N):
             predictions.append(model.predict(y_past, verbose=0)[0][0]) # predictions gets Ed'[n+1]
             Ed_past_temp.append(predictions[-1])
             y_past = np.array([Ed_past_temp]).reshape(1,LOOK_BACK,1)
