@@ -2,8 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from qpsolvers import solve_qp
 from matplotlib.animation import FuncAnimation
+import os
 
-t_span = 175
+t_span = 90
 dt = 0.01
 t = np.arange(0, t_span + dt, dt)
 num_steps = len(t)
@@ -114,12 +115,12 @@ model.compile(optimizer=optimizer, loss='mse')
 model.summary()
 PATIENCE = 50
 early_stopping_callback = EarlyStopping(monitor='loss', patience=PATIENCE)
-EPOCHS = 30
+EPOCHS = 5
 BATCH_SIZE = 2
 
 # Model checkpoint (to save the best model during learning)
 from keras.callbacks import ModelCheckpoint
-checkpoint_filepath = '/tmp/checkpoint'
+checkpoint_filepath = os.getcwd()
 model_checkpoint_callback = ModelCheckpoint(
     filepath=checkpoint_filepath,
     save_weights_only=True,
@@ -128,7 +129,7 @@ model_checkpoint_callback = ModelCheckpoint(
     save_best_only=True)
 
 # Data parameters
-NUM_POINTS = 7300 + 7300
+NUM_POINTS = 7300
 SPLIT_TRAIN_TEST = 0.5
 TRAIN_LENGTH = int(NUM_POINTS * SPLIT_TRAIN_TEST)
 GAIN = 0.01
@@ -493,9 +494,6 @@ time_text2 = ax2.text(0.05, 0.9, '', transform=ax2.transAxes)
 
 # Function to update the plot data in each frame
 def update(frame):
-    
-    #line_x1i_y1i.set_data(x1i[:frame], y1i[:frame]) ## for tracing lines
-    #line_x1d_y1d.set_data(x1d[:frame], y1d[:frame]) ## for tracing lines
     moving_point_i.set_data(x1i[frame], y1i[frame])
     moving_point_d.set_data(x1d[frame], y1d[frame])
     line_E.set_data(t[:frame], E[:frame])
@@ -505,10 +503,7 @@ def update(frame):
     return line_E_Ed_d, time_text, time_text2, line_x1d_y1d, line_E, moving_point_i, moving_point_d
 
 # Create the animations
-animation_x1i_y1i = FuncAnimation(fig, update, frames=num_steps, interval=20, blit=True)
-animation_x1d_y1d = FuncAnimation(fig, update, frames=num_steps, interval=20, blit=True)
-animation_E_Ed = FuncAnimation(fig, update, frames=num_steps, interval=20, blit=True)
-animation_E = FuncAnimation(fig, update, frames=num_steps, interval=20, blit=True)
+animation = FuncAnimation(fig, update, frames=num_steps, interval=5, blit=True)
 
 # Show the animations
 plt.show()
