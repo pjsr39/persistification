@@ -5,7 +5,7 @@ from matplotlib.animation import FuncAnimation
 import os
 import math
 
-t_span = 550
+t_span = 100
 dt = 0.01
 t = np.arange(0, t_span + dt, dt)
 num_steps = len(t)
@@ -61,6 +61,7 @@ alpha = 4
 E_charge = 5000
 E_lower = 4100
 E_min = 3700
+threshold_distance = 0.015
 
 c = 1.5
 m = 1
@@ -432,7 +433,7 @@ for n in range(len(t)-1):
     #logging.debug(f"Ed: {Ed[n]}")
     #logging.debug(f"needs_charging_d: {needs_charging_d}, needs_charging_i: {needs_charging_i}\n")
 
-    if abs(xdes1[n] - x1i[n]) <= 0.015 and abs(ydes1[n] - y1i[n]) <= 0.015:
+    if abs(xdes1[n] - x1i[n]) <= threshold_distance and abs(ydes1[n] - y1i[n]) <= threshold_distance:
         if start_computing_distance == False:
             start_computing_distance = True
             alpha_prev = math.atan2(y1i[n] - Yc1, x1i[n] - Xc1)
