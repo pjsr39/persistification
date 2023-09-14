@@ -3,8 +3,9 @@ import matplotlib.pyplot as plt
 from qpsolvers import solve_qp
 from matplotlib.animation import FuncAnimation
 import os
+import math
 
-t_span = 90
+t_span = 550
 dt = 0.01
 t = np.arange(0, t_span + dt, dt)
 num_steps = len(t)
@@ -68,6 +69,8 @@ p_d = np.zeros(num_steps + 1)
 p_c = np.zeros(num_steps + 1)
 needs_charging_d = False
 needs_charging_i = False
+start_computing_distance = False
+arc_length = 0
 
 cs_occupied_d = False
 
@@ -203,6 +206,7 @@ logging.debug("The program started")
 for n in range(len(t)-1):
 
     print("Current time =", n * dt)
+    print("Total distance covered =", arc_length)
     timestep = n * dt
     logging.debug(f"iteration: {n}, time: {timestep}")
 
@@ -224,41 +228,24 @@ for n in range(len(t)-1):
     X_d[:,n] = [x1d[n], y1d[n]]
     V_i[:,n] = [x2i[n], y2i[n]]
     X_wa_i[:,n] = [x_wa[n], y_wa[n]]
+
+    vi = np.sqrt(x2i[n]**2 + y2i[n]**2)
     
     ### Controller for intelligent robot to track ###
     e1 = xdes1[n] - x1i[n]
     alpha1 = -c*r * np.sin(c*t) + k * e1
-    z1 = x2i[n] - alpha1
+    z1 = x2i[n] - alpha1[n]
     alpha1_dot = -c**2 * r * np.cos(c*t) - k * z1 - k**2 * e1
-    ux_i = e1 + alpha1_dot - k * z1
+    ux_i = e1 + alpha1_dot[n] - k * z1
 
     e2 = ydes1[n] - y1i[n]
     alpha2 = c*r * np.cos(c*t) + k * e2
-    z2 = y2i[n] - alpha2
+    z2 = y2i[n] - alpha2[n]
     alpha2_dot = -c**2 * r * np.sin(c*t) - k * z2 - k**2 * e2
-    uy_i = e2 + alpha2_dot - k * z2
+    uy_i = e2 + alpha2_dot[n] - k * z2
 
-    U_nom = np.array([ux_i, uy_i])
+    U_track_i = np.array([ux_i, uy_i])
 
-    ### Barrier function implementation ###
-    vi = np.sqrt(x2i[n]**2 + y2i[n]**2)
-    norm_rob_cs = np.sqrt((X_i[0, n] - X_cs[0, n])**2 + (X_i[1, n] - X_cs[1, n])**2)
-    rho = (B_d / k_rho) * np.log(norm_rob_cs / d_charge)
-    h2 = (-B_d / k_rho * norm_rob_cs ** 2) * ((X_i[0, n] - X_cs[0, n]) * V_i[0, n] + (X_i[1, n] - X_cs[1, n]) * V_i[1, n]) - B_d * abs(V_i[0, n] ** 2) + alpha * (E[n] - E_min - rho)
-    partialh2_partialx = (-B_d / k_rho) * (norm_rob_cs ** 2 * V_i[0, n] - 2 * ((X_i[0, n] - X_cs[0, n]) * V_i[0, n] + (X_i[1, n] - X_cs[1, n]) * V_i[1, n]) * (X_i[0, n] - X_cs[0, n])) / norm_rob_cs ** 4 - alpha * (B_d / k_rho) * (X_i[0, n] - X_cs[0, n]) / norm_rob_cs ** 2
-    partialh2_partialy = (-B_d / k_rho) * (norm_rob_cs ** 2 * V_i[1, n] - 2 * ((X_i[0, n] - X_cs[0, n]) * V_i[0, n] + (X_i[1, n] - X_cs[1 ,n]) * V_i[1, n]) * (X_i[1, n] - X_cs[1, n])) / norm_rob_cs ** 4 - alpha * (B_d / k_rho) * (X_i[1, n] - X_cs[1, n]) / norm_rob_cs ** 2
-    Lfh2 = partialh2_partialx * V_i[0, n] + partialh2_partialy * V_i[1, n] + alpha * (-B_d * abs(vi ** 2))
-    Lgh2 = (-B_d / k_rho * (norm_rob_cs ** 2)) * np.array([X_i[0, n] - X_cs[0, n] - 2 * B_d * V_i[0, n], X_i[1, n] - X_cs[1, n] - 2 * B_d * V_i[1, n]])
-    f = -U_nom.T
-    A = -Lgh2
-    b = alpha * h2 + Lfh2
-    u = solve_qp(H, f[n], A, np.array([b]), None, None, None, None, solver="quadprog")
-    logging.debug(f"u: {u}")
-    logging.debug(f"h2: {h2}")
-    logging.debug(f"vi: {vi}")
-
-    U_track_i = np.array([u[0], u[1]]) # combined controller for tracking the desired trajectory and maintaining battery level
-    
     ### controller to take the int. robot to the CS
     e_csx = x_cs[n] - x1i[n]
     sigma_cs1 = k_cs * e_csx
@@ -336,7 +323,7 @@ for n in range(len(t)-1):
         needs_charging_i = False
 
     # Start learning as soon as E[n] < E_charge
-    if learned == False and Ed[n] < E_charge:
+    if learned == True and Ed[n] < E_charge:
         # Collect data to learn
         if len(Ed_buffer) < NUM_POINTS:
             Ed_buffer.append(Ed[n])
@@ -442,9 +429,19 @@ for n in range(len(t)-1):
         B = -B_d*abs(vi)**2 - Kd
     else:
         B = B_c
-    logging.debug(f"Ed: {Ed[n]}")
-    logging.debug(f"needs_charging_d: {needs_charging_d}, needs_charging_i: {needs_charging_i}\n")
+    #logging.debug(f"Ed: {Ed[n]}")
+    #logging.debug(f"needs_charging_d: {needs_charging_d}, needs_charging_i: {needs_charging_i}\n")
 
+    if abs(xdes1[n] - x1i[n]) <= 0.015 and abs(ydes1[n] - y1i[n]) <= 0.015:
+        if start_computing_distance == False:
+            start_computing_distance = True
+            alpha_prev = math.atan2(y1i[n] - Yc1, x1i[n] - Xc1)
+        else:
+            arc_length += r * abs( abs( (math.atan2(y1i[n] - Yc1, x1i[n] - Xc1) ) ) - abs(alpha_prev) )
+            alpha_prev = math.atan2(y1i[n] - Yc1, x1i[n] - Xc1)
+    else:
+        start_computing_distance = False
+    
     x1i[n+1] = x1i[n] + dt * x2i[n]
     x2i[n+1] = x2i[n] + dt * U[0]
     y1i[n+1] = y1i[n] + dt * y2i[n]
