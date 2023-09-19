@@ -4,7 +4,18 @@ from qpsolvers import solve_qp
 from matplotlib.animation import FuncAnimation
 import os
 import math
+import argparse
 
+# Args
+parser = argparse.ArgumentParser()
+parser.add_argument('--e_min', type=float, required=True)
+parser.add_argument('--e_max', type=float, required=True)
+parser.add_argument('--e_lower', type=float, required=True)
+parser.add_argument('--e_charge', type=float, required=True)
+parser.add_argument('--out_file', type=str, required=True)
+args = parser.parse_args()
+
+# Simulation length
 t_span = 100
 dt = 0.01
 t = np.arange(0, t_span + dt, dt)
@@ -31,11 +42,11 @@ x1i[0] = 10
 y1i[0] = 16
 x2i[0] = 1
 y2i[0] = 1
-E[0] = 5200
+E[0] = args.e_max
 
 x1d[0] = 10
 y1d[0] = 6
-Ed[0] = 5100
+Ed[0] = args.e_max
 
 Xc1 = 6.5
 Yc1 = 14
@@ -58,9 +69,9 @@ B_c_dumb = 20
 k_rho = 6
 d_charge = 0.5
 alpha = 4
-E_charge = 5000
-E_lower = 4100
-E_min = 3700
+E_charge = args.e_charge
+E_lower = args.e_lower
+E_min = args.e_min
 threshold_distance = 0.015
 
 c = 1.5
@@ -119,7 +130,7 @@ model.compile(optimizer=optimizer, loss='mse')
 model.summary()
 PATIENCE = 50
 early_stopping_callback = EarlyStopping(monitor='loss', patience=PATIENCE)
-EPOCHS = 5
+EPOCHS = 3
 BATCH_SIZE = 2
 
 # Model checkpoint (to save the best model during learning)
@@ -199,15 +210,18 @@ logging.basicConfig(filename=os.path.join(folder_dir,"log.txt"),
                     level=logging.DEBUG,
                     format="%(asctime)s %(message)s",
                     )
+PRINT_PERIOD = 1000 # each PRINT_PERIOD steps, print whatever
 
 """
 Main loop
 """
 logging.debug("The program started")
+logging.debug(f'Running for E_lower: {E_lower}, E_min: {E_min}, E_charge: {E_charge}, E_max: {args.e_max}')
+print(f'Running for E_lower: {E_lower}, E_min: {E_min}, E_charge: {E_charge}, E_max: {args.e_max}')
 for n in range(len(t)-1):
-
-    print("Current time =", n * dt)
-    print("Total distance covered =", arc_length)
+    if n % PRINT_PERIOD == 0:
+        print("Current time =", n * dt)
+        print("Total distance covered =", arc_length)
     timestep = n * dt
     logging.debug(f"iteration: {n}, time: {timestep}")
 
@@ -453,6 +467,15 @@ for n in range(len(t)-1):
     y1d[n+1] = y1d[n] + dt * U_dumb[1]
     Ed[n + 1] = Ed[n] + dt * battery_dumb
 
+# Save arc length
+num_runs = 0
+with open(args.out_file, "r") as file:
+    num_runs = file.readlines()
+with open(args.out_file, "a") as file:
+    if num_runs == 0:
+        file.write(str(E_lower) + "," + str(arc_length))
+    else:
+        file.write('\n' + str(E_lower) + "," + str(arc_length))
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
 ax1.plot(xdes1, ydes1, color = 'cyan')
