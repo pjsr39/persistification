@@ -10,11 +10,11 @@ import os
 Args
 """
 parser = argparse.ArgumentParser()
-parser.add_argument('--e_max', type=float, required=True)
 parser.add_argument('--e_min', type=float, required=True)
-parser.add_argument('--e_lower', type=float, required=False)
-parser.add_argument('--e_charge', type=float, required=False)
+parser.add_argument('--e_init', type=float, required=True)
+parser.add_argument('--e_charge', type=float, required=True)
 parser.add_argument('--resolution', type=float, nargs='?', default=0.1, required=False)
+parser.add_argument('--animation', action='store_true')
 args = parser.parse_args()
 
 """
@@ -33,23 +33,26 @@ f = open(out_file, "x")
 
 """
 Params
-E_lower \in [e_min, e_charge * 0.95]
-E_charge = 7/8 * e_max
+note: E_lower \in [e_min, e_charge]
 """
 resolution = args.resolution
-e_max = args.e_max
+e_init = args.e_init
 e_min = args.e_min
-e_charge = 7/8 * e_max
-e_lowers = np.arange(e_min, e_charge * 0.95, resolution)[1:]
+e_charge = args.e_charge
+e_lowers = np.arange(e_min, e_charge, resolution)[1:]
 
 """
 Loop
 """
-for e_lower in e_lowers:
-    subprocess.run(["python", "persistification_learning.py", 
+cmd = ["python3", "persistification_learning.py", 
                     "--e_min", str(e_min),
-                    "--e_max", str(e_max), 
-                    "--e_lower", str(e_lower), 
+                    "--e_init", str(e_init), 
+                    "--e_lower", "", 
                     "--e_charge", str(e_charge),
-                    "--out_file", out_file]
-    )
+                    "--out_file", out_file
+                    ]
+if args.animation: cmd.append("--animation")
+
+for e_lower in e_lowers:
+    cmd[7] = str(e_lower)
+    subprocess.run(cmd)

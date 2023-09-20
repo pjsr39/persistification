@@ -9,10 +9,11 @@ import argparse
 # Args
 parser = argparse.ArgumentParser()
 parser.add_argument('--e_min', type=float, required=True)
-parser.add_argument('--e_max', type=float, required=True)
+parser.add_argument('--e_init', type=float, required=True)
 parser.add_argument('--e_lower', type=float, required=True)
 parser.add_argument('--e_charge', type=float, required=True)
 parser.add_argument('--out_file', type=str, required=True)
+parser.add_argument('--animation', action="store_true")
 args = parser.parse_args()
 
 # Simulation length
@@ -42,11 +43,11 @@ x1i[0] = 10
 y1i[0] = 16
 x2i[0] = 1
 y2i[0] = 1
-E[0] = args.e_max
+E[0] = args.e_init
 
 x1d[0] = 10
 y1d[0] = 6
-Ed[0] = args.e_max
+Ed[0] = args.e_init
 
 Xc1 = 6.5
 Yc1 = 14
@@ -103,7 +104,6 @@ H = np.eye(2)
 """
 Learning
 """
-
 # Set seed
 seed_obj = np.random.RandomState(9999)
 
@@ -216,8 +216,8 @@ PRINT_PERIOD = 1000 # each PRINT_PERIOD steps, print whatever
 Main loop
 """
 logging.debug("The program started")
-logging.debug(f'Running for E_lower: {E_lower}, E_min: {E_min}, E_charge: {E_charge}, E_max: {args.e_max}')
-print(f'Running for E_lower: {E_lower}, E_min: {E_min}, E_charge: {E_charge}, E_max: {args.e_max}')
+logging.debug(f'Running for E_lower: {E_lower}, E_min: {E_min}, E_charge: {E_charge}, E_init: {args.e_init}')
+print(f'Running for E_lower: {E_lower}, E_min: {E_min}, E_charge: {E_charge}, E_init: {args.e_init}')
 for n in range(len(t)-1):
     if n % PRINT_PERIOD == 0:
         print("Current time =", n * dt)
@@ -467,7 +467,7 @@ for n in range(len(t)-1):
     y1d[n+1] = y1d[n] + dt * U_dumb[1]
     Ed[n + 1] = Ed[n] + dt * battery_dumb
 
-# Save arc length
+# Save arc length and model
 num_runs = 0
 with open(args.out_file, "r") as file:
     num_runs = file.readlines()
@@ -477,66 +477,67 @@ with open(args.out_file, "a") as file:
     else:
         file.write('\n' + str(E_lower) + "," + str(arc_length))
 
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
-ax1.plot(xdes1, ydes1, color = 'cyan')
-ax1.plot(xdes2, ydes2, color = 'cyan')
-ax1.scatter(x_cs[0], y_cs[0], facecolors="none", edgecolors = "green")
-ax1.plot(barrier_x, barrier_y)
-ax1.scatter(x_wa[0], y_wa[0], facecolors="none", edgecolors = "black")
+if args.animation == True:
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+    ax1.plot(xdes1, ydes1, color = 'cyan')
+    ax1.plot(xdes2, ydes2, color = 'cyan')
+    ax1.scatter(x_cs[0], y_cs[0], facecolors="none", edgecolors = "green")
+    ax1.plot(barrier_x, barrier_y)
+    ax1.scatter(x_wa[0], y_wa[0], facecolors="none", edgecolors = "black")
 
-# Initialize Line2D objects for x1i vs y1i and E vs Ed plots
-line_x1i_y1i, = ax1.plot([], [])
-line_x1d_y1d, = ax1.plot([], [])
-line_E, = ax2.plot([], [], color='blue', label='E')
-line_E_Ed_d, = ax2.plot([], [], color='magenta', label='Ed')
-moving_point_i, = ax1.plot([], [], marker='o', color='blue', markersize=2)
-moving_point_d, = ax1.plot([], [], marker='o', color='magenta', markersize=2)
-ax2.legend()
+    # Initialize Line2D objects for x1i vs y1i and E vs Ed plots
+    line_x1i_y1i, = ax1.plot([], [])
+    line_x1d_y1d, = ax1.plot([], [])
+    line_E, = ax2.plot([], [], color='blue', label='E')
+    line_E_Ed_d, = ax2.plot([], [], color='magenta', label='Ed')
+    moving_point_i, = ax1.plot([], [], marker='o', color='blue', markersize=2)
+    moving_point_d, = ax1.plot([], [], marker='o', color='magenta', markersize=2)
+    ax2.legend()
 
-ax2.plot(t, np.full_like(t, E_charge), '--', label='E_charge')
-ax2.plot(t, np.full_like(t, E_min), '--', label='E_min')
-ax2.plot(t, np.full_like(t, E_lower), '--', label='E_lower')
+    ax2.plot(t, np.full_like(t, E_charge), '--', label='E_charge')
+    ax2.plot(t, np.full_like(t, E_min), '--', label='E_min')
+    ax2.plot(t, np.full_like(t, E_lower), '--', label='E_lower')
 
-# Set axis limits for the subplots
-ax1.set_xlim(0, 20)
-ax1.set_ylim(0, 20)
-ax1.set_xlabel('x position')
-ax1.set_ylabel('y position')
+    # Set axis limits for the subplots
+    ax1.set_xlim(0, 20)
+    ax1.set_ylim(0, 20)
+    ax1.set_xlabel('x position')
+    ax1.set_ylabel('y position')
 
-ax2.set_xlim(0, t_span)
-ax2.set_ylim(3500, 5500)
-ax2.set_xlabel('Time') 
-ax2.set_ylabel('Energy')
-ax2.grid()
+    ax2.set_xlim(0, t_span)
+    ax2.set_ylim(3500, 5500)
+    ax2.set_xlabel('Time') 
+    ax2.set_ylabel('Energy')
+    ax2.grid()
 
-# Initialize text for displaying time in the plots
-time_text = ax1.text(0.05, 0.9, '', transform=ax1.transAxes)
-time_text2 = ax2.text(0.05, 0.9, '', transform=ax2.transAxes)
+    # Initialize text for displaying time in the plots
+    time_text = ax1.text(0.05, 0.9, '', transform=ax1.transAxes)
+    time_text2 = ax2.text(0.05, 0.9, '', transform=ax2.transAxes)
 
-# Function to update the plot data in each frame
-def update(frame):
-    moving_point_i.set_data(x1i[frame], y1i[frame])
-    moving_point_d.set_data(x1d[frame], y1d[frame])
-    line_E.set_data(t[:frame], E[:frame])
-    line_E_Ed_d.set_data(t[:frame], Ed[:frame])
-    time_text.set_text('Time = {:.2f}'.format(frame * dt))
-    time_text2.set_text('Time = {:.2f}'.format(frame * dt))
-    return line_E_Ed_d, time_text, time_text2, line_x1d_y1d, line_E, moving_point_i, moving_point_d
+    # Function to update the plot data in each frame
+    def update(frame):
+        moving_point_i.set_data(x1i[frame], y1i[frame])
+        moving_point_d.set_data(x1d[frame], y1d[frame])
+        line_E.set_data(t[:frame], E[:frame])
+        line_E_Ed_d.set_data(t[:frame], Ed[:frame])
+        time_text.set_text('Time = {:.2f}'.format(frame * dt))
+        time_text2.set_text('Time = {:.2f}'.format(frame * dt))
+        return line_E_Ed_d, time_text, time_text2, line_x1d_y1d, line_E, moving_point_i, moving_point_d
 
-# Create the animations
-animation = FuncAnimation(fig, update, frames=num_steps, interval=5, blit=True)
+    # Create the animations
+    animation = FuncAnimation(fig, update, frames=num_steps, interval=5, blit=True)
 
-# Show the animations
-plt.show()
+    # Show the animations
+    plt.show()
 
 
 
-#plt.plot(t, Ed[:-1])
-#plt.plot(t, np.full_like(t, E_charge), '--', label='E_charge')
-#plt.plot(t, np.full_like(t, E_min), '--', label='E_min')
-#plt.plot(t, np.full_like(t, E_lower), '--', label='E_lower')
-#plt.xlabel('Time')
-#plt.ylabel('Ed')
-#plt.title('Energy of Dumb Robot over Time')
-#plt.grid(True)
-#plt.show()
+    #plt.plot(t, Ed[:-1])
+    #plt.plot(t, np.full_like(t, E_charge), '--', label='E_charge')
+    #plt.plot(t, np.full_like(t, E_min), '--', label='E_min')
+    #plt.plot(t, np.full_like(t, E_lower), '--', label='E_lower')
+    #plt.xlabel('Time')
+    #plt.ylabel('Ed')
+    #plt.title('Energy of Dumb Robot over Time')
+    #plt.grid(True)
+    #plt.show()
